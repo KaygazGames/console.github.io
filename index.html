@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Konsolu - Senkranize Banka & Hacker Simülatörü</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+    }
+    .form-container {
+      background: #fff;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      margin: 20px auto;
+      max-width: 600px;
+    }
+    h1, h2, h3 {
+      text-align: center;
+    }
+    input, button {
+      padding: 10px;
+      margin: 5px;
+      font-size: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    th {
+      background-color: #333;
+      color: #fff;
+    }
+    .message {
+      padding: 10px;
+      background: #e7e7e7;
+      border-left: 5px solid #333;
+      margin-top: 10px;
+      text-align: center;
+    }
+  </style>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <!-- Admin Konsolu Giriş Formu -->
+  <div class="form-container" id="adminLoginSection">
+    <h2>Admin Konsolu Girişi</h2>
+    <p>Lütfen admin şifresini giriniz:</p>
+    <input type="password" id="adminConsolePassword" placeholder="Admin Şifresi">
+    <button onclick="verifyAdminConsolePassword()">Giriş Yap</button>
+    <div class="message" id="adminConsoleMessage"></div>
+  </div>
+  
+  <!-- Admin Konsolu Paneli (Giriş yapıldıktan sonra görünür) -->
+  <div class="form-container hidden" id="adminPanelSection">
+    <h1>Admin Konsolu</h1>
+    <div id="scoreboard"></div>
+    <div class="message" id="adminOpsMessage"></div>
+  </div>
+  
+  <script>
+    // Firebase yapılandırması – kendi projenizden bilgileri ekleyin.
+    const firebaseConfig = {
+      apiKey: "AIzaSyD1gL06NnTrToBUyyqWC8bnjfXlohLQzYM",
+      authDomain: "hackstersw.firebaseapp.com",
+      projectId: "hackstersw"
+      // Diğer alanları da ekleyin...
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    
+    let adminVerifiedConsole = false;
+    
+    // Admin konsoluna giriş için şifre kontrolü (şifre: "Bilirim")
+    function verifyAdminConsolePassword() {
+      const input = document.getElementById("adminConsolePassword").value;
+      if (input === "Bilirim") {
+        adminVerifiedConsole = true;
+        document.getElementById("adminLoginSection").classList.add("hidden");
+        document.getElementById("adminPanelSection").classList.remove("hidden");
+        document.getElementById("adminOpsMessage").textContent = "Admin işlevleri aktif.";
+        subscribeToUsers();
+      } else {
+        document.getElementById("adminConsoleMessage").textContent = "Yanlış şifre!";
+      }
+    }
+    
+    // Firestore'dan kullanıcı verilerini dinamik olarak alır ve scoreboard'u günceller.
+    function subscribeToUsers() {
+      db.collection("users").onSnapshot(snapshot => {
+        let users = [];
+        snapshot.forEach(doc => {
+          let u = { username: doc.id, ...doc.data() };
+          // Ban süresi kontrolü: Eğer ban süresi dolmuşsa otomatik unban
+          if (u.banned && u.banUntil) {
+            let banTime = new Date(u.banUntil).getTime();
+            if (Date.now() > banTime) {
+              unbanUser(u.username);
+              u.banned = false;
+              u.banUntil = null;
+            }
+          }
+          users.push(u);
+        });
+        updateScoreboard(users);
+      });
+    }
+    
+    // Scoreboard: Tüm kullanıcıların listesini, bakiye, durum ve admin işlemleri butonlarını gösterir.
+    function updateScoreboard(users) {
+      let html = '<table><tr>';
+      html += '<th>Kullanıcı Adı</th>';
+      html += '<th>Bakiye ($)</th>';
+      html += '<th>Durum</th>';
+      // Admin işlemleri sütunları
+      html += '<th>Ceza Ver</th>';
+      html += '<th>Banla</th>';
+      html += '<th>Banı Aç</th>';
+      html += '<th>Hack Mute</th>';
+      html += '<th>Hesap Sil</th>';
+      html += '</tr>';
+      users.forEach(u => {
+        html += '<tr>';
+        html += `<td>${u.username}</td>`;
+        html += `<td>${u.balance}</td>`;
+        if (u.banned && u.banUntil) {
+          let remaining = Math.max(0, Math.floor((new Date(u.banUntil).getTime() - Date.now()) / 60000));
+          html += `<td>Banlı (${remaining} dk)</td>`;
+        } else {
+          html += `<td>Aktif</td>`;
+        }
+        // Admin işlemleri: butonlar sadece admin konsolunda (yani bu sayfada) aktif
+        html += `<td><button onclick="givePenalty('${u.username}')">Ceza (100$)</button></td>`;
+        if (!u.banned) {
+          html += `<td><button onclick="banUser('${u.username}')">Banla</button></td>`;
+          html += `<td></td>`;
+        } else {
+          html += `<td><button onclick="unbanUser('${u.username}')">Banı Aç</button></td>`;
+        }
+        html += `<td><button onclick="muteUser('${u.username}')">Hack Mute</button></td>`;
+        html += `<td><button onclick="deleteUser('${u.username}')">Hesap Sil</button></td>`;
+        html += '</tr>';
+      });
+      html += '</table>';
+      document.getElementById("scoreboard").innerHTML = html;
+    }
+    
+    // Admin İşlevleri
+    async function givePenalty(username) {
+      try {
+        const userRef = db.collection("users").doc(username);
+        await db.runTransaction(async (transaction) => {
+          const userDoc = await transaction.get(userRef);
+          if (!userDoc.exists) throw "Kullanıcı bulunamadı!";
+          let newBalance = userDoc.data().balance - 100;
+          if (newBalance < 0) newBalance = 0;
+          transaction.update(userRef, { balance: newBalance });
+        });
+        document.getElementById("adminOpsMessage").textContent = "Ceza başarıyla uygulandı.";
+      } catch (error) {
+        document.getElementById("adminOpsMessage").textContent = "Ceza uygulanamadı: " + error;
+      }
+    }
+    
+    function banUser(username) {
+      let duration = prompt("Ban süresini dakika olarak giriniz (örn: 1, 10, 120):");
+      if (duration != null) {
+        let minutes = parseInt(duration);
+        if (isNaN(minutes) || minutes <= 0) {
+          alert("Geçersiz süre");
+          return;
+        }
+        let banUntil = new Date(Date.now() + minutes * 60000);
+        db.collection("users").doc(username).update({ banned: true, banUntil: banUntil });
+      }
+    }
+    
+    function unbanUser(username) {
+      db.collection("users").doc(username).update({ banned: false, banUntil: null });
+    }
+    
+    function muteUser(username) {
+      let duration = prompt("Hack mute süresini dakika olarak giriniz (örn: 1, 10, 120):");
+      if (duration != null) {
+        let minutes = parseInt(duration);
+        if (isNaN(minutes) || minutes <= 0) {
+          alert("Geçersiz süre");
+          return;
+        }
+        let muteUntil = new Date(Date.now() + minutes * 60000);
+        db.collection("users").doc(username).update({ muteUntil: muteUntil });
+      }
+    }
+    
+    function deleteUser(username) {
+      if (confirm("Bu kullanıcıyı tamamen silmek istediğinize emin misiniz?")) {
+        db.collection("users").doc(username).delete();
+      }
+    }
+  </script>
+</body>
+</html>
